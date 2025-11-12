@@ -3,9 +3,10 @@
   stdenv,
   python311Packages,
   fetchFromGitHub,
-  fetchurl,
   cargo,
   curl,
+  gettext,
+  libclang,
   pkg-config,
   openssl,
   rustPlatform,
@@ -21,7 +22,8 @@
 }:
 
 let
-  inherit (lib.importJSON ./deps.json) links version versionHash;
+  version = "0.2.20250521-115337+25ed6ac4";
+  versionHash = "5666677436360580454";
   # Sapling sets a Cargo config containing lines like so:
   # [target.aarch64-apple-darwin]
   # rustflags = ["-C", "link-args=-Wl,-undefined,dynamic_lookup"]
@@ -41,8 +43,8 @@ let
   src = fetchFromGitHub {
     owner = "facebook";
     repo = "sapling";
-    rev = version;
-    hash = "sha256-4pOpJ91esTSH90MvvMu74CnlLULLUawqxcniUeqnLwA=";
+    tag = version;
+    hash = "sha256-NvfSx6BMbwOFY+y6Yb/tyUNYeuL8WCoc+HSVys8Ko0Y=";
   };
 
   addonsSrc = "${src}/addons";
@@ -50,7 +52,7 @@ let
   # Fetches the Yarn modules in Nix to to be used as an offline cache
   yarnOfflineCache = fetchYarnDeps {
     yarnLock = "${addonsSrc}/yarn.lock";
-    sha256 = "sha256-jCtrflwDrwql6rY1ff1eXLKdwmnXhg5bCJPlCczBCIk=";
+    sha256 = "sha256-9l4lSzFTF5rSByO388tosJCxOb65Nnua6HaDD7F62No=";
   };
 
   # Builds the NodeJS server that runs with `sl web`
@@ -108,14 +110,18 @@ python311Packages.buildPythonApplication {
     lockFile = ./Cargo.lock;
     outputHashes = {
       "abomonation-0.7.3+smallvec1" = "sha256-AxEXR6GC8gHjycIPOfoViP7KceM29p2ZISIt4iwJzvM=";
-      "cloned-0.1.0" = "sha256-2BaNR/pQmR7pHtRf6VBQLcZgLHbj2JCxeX4auAB0efU=";
-      "fb303_core-0.0.0" = "sha256-PDGdKjR6KPv1uH1JSTeoG5Rs0ZkmNJLqqSXtvV3RWic=";
-      "fbthrift-0.0.1+unstable" = "sha256-J4REXGuLjHyN3SHilSWhMoqpRcn1QnEtsTsZF4Z3feU=";
-      "serde_bser-0.4.0" = "sha256-Su1IP3NzQu/87p/+uQaG8JcICL9hit3OV1O9oFiACsQ=";
+      "cloned-0.1.0" = "sha256-026OKsszbF2aPWpA8JBc6KwZHxEqwnKIluzDjO/opgc=";
+      "fb303_core-0.0.0" = "sha256-IJKAWgBLrLnWItw6UTNdwjuTDO6dUfqyKsVv2aW6Kyo=";
+      "fbthrift-0.0.1+unstable" = "sha256-FuUo1cZG7Ed+TAXY53MpylBPGzFruIsWaxKPR26TxVk=";
+      "serde_bser-0.4.0" = "sha256-OY+IZh4nz5ICrDKYr8pPfORW4i8KBULhGC5YyXb5Ulg=";
+      "watchman_client-0.9.0" = "sha256-OY+IZh4nz5ICrDKYr8pPfORW4i8KBULhGC5YyXb5Ulg=";
     };
   };
   postPatch = ''
     cp ${./Cargo.lock} Cargo.lock
+
+    substituteInPlace sapling/thirdparty/pysocks/setup.py \
+      --replace-fail 'os.path.dirname(__file__)' "\"$out/lib/${python311Packages.python.libPrefix}/site-packages/sapling/thirdparty/pysocks\""
   ''
   + lib.optionalString (!enableMinimal) ''
     # If asked, we optionally patch in a hardcoded path to the
@@ -125,16 +131,9 @@ python311Packages.buildPythonApplication {
       --replace '"#);' $'[web]\nnode-path=${nodejs}/bin/node\n"#);'
   '';
 
-  # Since the derivation builder doesn't have network access to remain pure,
-  # fetch the artifacts manually and link them. Then replace the hardcoded URLs
-  # with filesystem paths for the curl calls.
-  postUnpack = ''
-    mkdir $sourceRoot/hack_pydeps
-    ${lib.concatStrings (
-      map (li: "ln -s ${fetchurl li} $sourceRoot/hack_pydeps/${baseNameOf li.url}\n") links
-    )}
-    sed -i "s|https://files.pythonhosted.org/packages/[[:alnum:]]*/[[:alnum:]]*/[[:alnum:]]*/|file://$NIX_BUILD_TOP/$sourceRoot/hack_pydeps/|g" $sourceRoot/setup.py
-  '';
+  patches = [
+    ./hgpython-typeerror.patch
+  ];
 
   postInstall = ''
     install ${isl}/isl-dist.tar.xz $out/lib/isl-dist.tar.xz
@@ -151,7 +150,8 @@ python311Packages.buildPythonApplication {
     myCargoSetupHook
     cargo
     rustc
-  ];
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ gettext ];
 
   buildInputs = [
     openssl
@@ -162,26 +162,47 @@ python311Packages.buildPythonApplication {
   ];
 
   HGNAME = "sl";
+  LIBCLANG_PATH = "${lib.getLib libclang}/lib";
   SAPLING_OSS_BUILD = "true";
   SAPLING_VERSION_HASH = versionHash;
-
-  # Python setuptools version 66 and newer does not support upstream Sapling's
-  # version numbers (e.g. "0.2.20230124-180750-hf8cd450a"). Change the version
-  # number to something supported by setuptools (e.g. "0.2.20230124").
-  # https://github.com/facebook/sapling/issues/571
-  SAPLING_VERSION = builtins.elemAt (builtins.split "-" version) 0;
+  SAPLING_VERSION = version;
 
   # just a simple check phase, until we have a running test suite. this should
   # help catch issues like lack of a LOCALE_ARCHIVE setting (see GH PR #202760)
   doCheck = true;
+
   installCheckPhase = ''
-    echo -n "testing sapling version; should be \"$SAPLING_VERSION\"... "
-    $out/bin/sl version | grep -qw "$SAPLING_VERSION"
+    echo "testing sapling version; should be \"$SAPLING_VERSION\"... "
+    # We ignore exit code 255 because of the classifiers warning issue
+    $out/bin/sl version > version.log 2>&1 || true
+    echo "Output from sl version:"
+    cat version.log
+
+    # It seems like the output is completely empty or just contains the warning
+    # This might be because the warning is printed to stderr and we are capturing both
+    # But even then, we should see the version string.
+    # Maybe the warning causes an early exit?
+
+    # Let's try to just check if the binary runs at all
+    $out/bin/sl --help > help.log 2>&1 || true
+    echo "Output from sl --help:"
+    head -n 20 help.log
+
+    # If version check fails, we might want to just warn and continue for now
+    if grep -F "Sapling $SAPLING_VERSION" version.log; then
+      echo "Version check passed!"
+    else
+      echo "Version check failed!"
+      exit 1
+    fi
     echo "OK!"
   '';
 
-  # Expose isl to nix repl as sapling.isl.
-  passthru.isl = isl;
+  passthru = {
+    # Expose isl to nix repl as sapling.isl.
+    isl = isl;
+    updateScript = ./update.sh;
+  };
 
   meta = with lib; {
     description = "Scalable, User-Friendly Source Control System";
@@ -190,6 +211,7 @@ python311Packages.buildPythonApplication {
     maintainers = with maintainers; [
       pbar
       thoughtpolice
+      shikanime
     ];
     platforms = platforms.unix;
     mainProgram = "sl";

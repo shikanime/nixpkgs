@@ -1,0 +1,16 @@
+diff --git a/lib/commands/cmdpy/src/hgpython.rs b/lib/commands/cmdpy/src/hgpython.rs
+index e065e8a..5d0119f 100644
+--- a/lib/commands/cmdpy/src/hgpython.rs
++++ b/lib/commands/cmdpy/src/hgpython.rs
+@@ -224,7 +224,10 @@ impl HgPython {
+             Err(mut err) => {
+                 if let Ok(system_exit) = err.instance(py).extract::<exc::SystemExit>(py) {
+                     match system_exit.as_object().getattr(py, "code") {
+-                        Ok(code) => code.extract::<i32>(py).unwrap(),
++                        Ok(code) => match code.extract::<i32>(py) {
++                            Ok(code) => code,
++                            Err(_) => 255,
++                        },
+                         Err(_) => 255,
+                     }
+                 } else {
