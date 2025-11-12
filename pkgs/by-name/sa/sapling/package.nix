@@ -192,6 +192,7 @@ python311Packages.buildPythonApplication {
     maintainers = with maintainers; [
       pbar
       thoughtpolice
+      shikanime
     ];
     platforms = platforms.unix;
     mainProgram = "sl";
