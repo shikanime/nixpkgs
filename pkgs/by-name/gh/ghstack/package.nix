@@ -4,7 +4,7 @@
   fetchFromGitHub,
 }:
 
-python3.pkgs.buildPythonApplication {
+python3.pkgs.buildPythonApplication rec {
   pname = "ghstack";
   version = "0.12.0";
   pyproject = true;
@@ -16,7 +16,12 @@ python3.pkgs.buildPythonApplication {
     hash = "sha256-Ywwjeupa8eE/vkrbl5SIbvQs53xaLnq9ieWRFwzmuuc=";
   };
 
-  build-system = [ python3.pkgs.poetry-core ];
+  postPatch = ''
+    substituteInPlace pyproject.toml \
+      --replace-fail 'requires = ["uv_build>=0.6,<0.7"]' 'requires = ["uv_build>=0.6"]'
+  '';
+
+  build-system = [ python3.pkgs.uv-build ];
 
   dependencies = with python3.pkgs; [
     aiohttp
@@ -27,7 +32,7 @@ python3.pkgs.buildPythonApplication {
     typing-extensions
   ];
 
-  pythonImportsCheck = [ "ghstack" ];
+  pythonImportsCheck = [ "ghstack.cli" ];
 
   meta = {
     description = "Submit stacked diffs to GitHub on the command line";
